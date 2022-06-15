@@ -1,6 +1,6 @@
 use std::{
     collections::VecDeque,
-    mem::{self, ManuallyDrop, MaybeUninit},
+    mem::ManuallyDrop,
     ptr,
     sync::{atomic::AtomicBool, Arc, RwLock},
 };
@@ -186,17 +186,7 @@ impl MemTables {
     /// Get view of all current memtables
     pub fn view(&self) -> MemTablesView {
         // Maybe flush is better.
-        assert!(self.immutable.len() < MEMTABLE_VIEW_MAX);
-        let mut array: [MaybeUninit<Skiplist<Comparator>>; MEMTABLE_VIEW_MAX] =
-            unsafe { MaybeUninit::uninit().assume_init() };
-        array[0] = MaybeUninit::new(self.mutable.skl.clone());
-        for (i, s) in self.immutable.iter().enumerate() {
-            array[i + 1] = MaybeUninit::new(s.skl.clone());
-        }
-        MemTablesView {
-            tables: unsafe { ManuallyDrop::new(mem::transmute(array)) },
-            len: self.immutable.len() + 1,
-        }
+        panic!()
     }
 
     /// Get mutable memtable
