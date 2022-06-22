@@ -842,7 +842,7 @@ mod normal_db {
         where
             F: FnOnce(Arc<Agate>) + Clone + Send + 'static,
         {
-            let num_go = 16;
+            let num_go = 4;
 
             for _ in 0..10 {
                 set_count.store(0, Ordering::SeqCst);
