@@ -128,35 +128,50 @@
     (function () {
       // Colors from https://github.com/github/linguist/blob/master/lib/linguist/languages.yml
       const toolColors = {
-        cargo: '#dea584',
-        go: '#00add8',
-        benchmarkjs: '#f1e05a',
-        benchmarkluau: '#000080',
-        pytest: '#3572a5',
-        googlecpp: '#f34b7d',
-        catch2: '#f34b7d',
-        julia: '#a270ba',
-        benchmarkdotnet: '#178600',
-        customBiggerIsBetter: '#38ff38',
-        customSmallerIsBetter: '#ff3838',
+        agate: '#dea584',
+        rocks: '#00add8',
         _: '#333333'
       };
+
+      const benchKinds = ['populate small value', 'randread small value', 'iterate small value', 'populate large value', 'randread large value', 'iterate large value'];
+
+      function removeFirstWord(str) {
+        const indexOfSpace = str.indexOf(' ');
+
+        if (indexOfSpace === -1) {
+          return '';
+        }
+
+        return str.substring(indexOfSpace + 1);
+      }
 
       function init() {
         function collectBenchesPerTestCase(entries) {
           const map = new Map();
+
+          for (const benchKind of benchKinds) {
+            map.set(benchKind, new Map());
+          }
+
           for (const entry of entries) {
             const { commit, date, tool, benches } = entry;
             for (const bench of benches) {
               const result = { commit, date, tool, bench };
-              const arr = map.get(bench.name);
-              if (arr === undefined) {
-                map.set(bench.name, [result]);
+              const kind = removeFirstWord(bench.name);
+              const m = map.get(kind);
+              if (m === undefined) {
+                console.error('Unknown bench name: ' + bench.name);
               } else {
-                arr.push(result);
+                const arr = m.get(bench.name);
+                if (arr === undefined) {
+                  m.set(bench.name, [result]);
+                } else {
+                  arr.push(result);
+                }
               }
             }
           }
+
           return map;
         }
 
@@ -191,18 +206,26 @@
           canvas.className = 'benchmark-chart';
           parent.appendChild(canvas);
 
-          const color = toolColors[dataset.length > 0 ? dataset[0].tool : '_'];
+          const entries = Array.from(dataset.entries());
+
+          const labels = entries[0][1].map(d => d.commit.id.slice(0, 7));
+          const datasets = [];
+          for (const [lineName, lineData] of entries) {
+            const color = toolColors[lineName.split(' ')[0]];
+
+            datasets.push({
+              label: lineName,
+              data: lineData.map(d => d.bench.value / 1000000),
+              borderColor: color,
+              backgroundColor: color + '60', // Add alpha for #rrggbbaa
+            });
+          }
+
           const data = {
-            labels: dataset.map(d => d.commit.id.slice(0, 7)),
-            datasets: [
-              {
-                label: name,
-                data: dataset.map(d => d.bench.value),
-                borderColor: color,
-                backgroundColor: color + '60', // Add alpha for #rrggbbaa
-              }
-            ],
-          };
+            labels: labels,
+            datasets: datasets,
+          }
+
           const options = {
             scales: {
               xAxes: [
@@ -217,7 +240,7 @@
                 {
                   scaleLabel: {
                     display: true,
-                    labelString: dataset.length > 0 ? dataset[0].bench.unit : '',
+                    labelString: "ms/iter",
                   },
                   ticks: {
                     beginAtZero: true,
@@ -228,13 +251,13 @@
             tooltips: {
               callbacks: {
                 afterTitle: items => {
-                  const { index } = items[0];
-                  const data = dataset[index];
+                  const item = items[0];
+                  const data = entries[item.datasetIndex][1][item.index];
                   return '\n' + data.commit.message + '\n\n' + data.commit.timestamp + ' committed by @' + data.commit.committer.username + '\n';
                 },
                 label: item => {
                   let label = item.value;
-                  const { range, unit } = dataset[item.index].bench;
+                  const { range, unit } = entries[item.datasetIndex][1][item.index].bench;
                   label += ' ' + unit;
                   if (range) {
                     label += ' (' + range + ')';
@@ -242,7 +265,7 @@
                   return label;
                 },
                 afterLabel: item => {
-                  const { extra } = dataset[item.index].bench;
+                  const { extra } = entries[item.datasetIndex][1][item.index].bench;
                   return extra ? '\n' + extra : '';
                 }
               }
@@ -253,7 +276,7 @@
               }
               // XXX: Undocumented. How can we know the index?
               const index = activeElems[0]._index;
-              const url = dataset[index].commit.url;
+              const url = entries[0][1][index].commit.url;
               window.open(url, '_blank');
             },
           };
@@ -279,8 +302,9 @@
           graphsElem.className = 'benchmark-graphs';
           setElem.appendChild(graphsElem);
 
-          for (const [benchName, benches] of benchSet.entries()) {
-            renderGraph(graphsElem, benchName, benches)
+          for (const benchKind of benchKinds) {
+            const map = benchSet.get(benchKind);
+            renderGraph(graphsElem, benchKind, map)
           }
         }
 
