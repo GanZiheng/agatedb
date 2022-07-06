@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1657094423780,
+  "lastUpdate": 1657095830693,
   "repoUrl": "https://github.com/GanZiheng/agatedb",
   "entries": {
     "Benchmark": [
@@ -311,6 +311,102 @@ window.BENCHMARK_DATA = {
             "name": "rocks iterate large value",
             "value": 105789193,
             "range": "± 985960",
+            "unit": "ns/iter"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "ganziheng98@gmail.com",
+            "name": "GanZiheng",
+            "username": "GanZiheng"
+          },
+          "committer": {
+            "email": "ganziheng98@gmail.com",
+            "name": "GanZiheng",
+            "username": "GanZiheng"
+          },
+          "distinct": true,
+          "id": "90e8fe481f8eb78d6808b1d8e8007e35f59a34db",
+          "message": "Merge branch 'master' of https://github.com/tikv/agatedb into test-bench-action",
+          "timestamp": "2022-07-06T16:10:03+08:00",
+          "tree_id": "f7aff45aa5db60bf373687883c2013589accae36",
+          "url": "https://github.com/GanZiheng/agatedb/commit/90e8fe481f8eb78d6808b1d8e8007e35f59a34db"
+        },
+        "date": 1657095830039,
+        "tool": "cargo",
+        "benches": [
+          {
+            "name": "badger populate small value",
+            "value": 3134934,
+            "range": "± 853478",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "badger randread small value",
+            "value": 1198613,
+            "range": "± 904",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "badger iterate small value",
+            "value": 280308,
+            "range": "± 168",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "badger populate large value",
+            "value": 481317157,
+            "range": "± 20884606",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "badger randread large value",
+            "value": 15145918,
+            "range": "± 186045",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "badger iterate large value",
+            "value": 8334075,
+            "range": "± 241405",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "rocks populate small value",
+            "value": 1066008,
+            "range": "± 27049",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "rocks randread small value",
+            "value": 1654723,
+            "range": "± 4866",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "rocks iterate small value",
+            "value": 147063,
+            "range": "± 1378",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "rocks populate large value",
+            "value": 477502386,
+            "range": "± 16066140",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "rocks randread large value",
+            "value": 128227247,
+            "range": "± 1447417",
+            "unit": "ns/iter"
+          },
+          {
+            "name": "rocks iterate large value",
+            "value": 134648526,
+            "range": "± 1577045",
             "unit": "ns/iter"
           }
         ]
