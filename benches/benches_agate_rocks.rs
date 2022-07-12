@@ -290,7 +290,7 @@ fn bench_rocks(c: &mut Criterion) {
 
 criterion_group! {
   name = benches_agate_rocks;
-  config = Criterion::default();
+  config = Criterion::default().sample_size(10);
   targets = bench_agate, bench_rocks
 }
 
