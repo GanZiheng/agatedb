@@ -2,6 +2,7 @@ mod opt;
 
 use std::{
     collections::VecDeque,
+    fmt::Debug,
     fs,
     path::PathBuf,
     sync::{
@@ -159,6 +160,17 @@ impl Drop for Agate {
         self.flush_handle.take().unwrap().join().unwrap();
         self.closer.close();
         self.pool.shutdown();
+    }
+}
+
+impl Debug for Agate {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "AgateDB dir={}, value_dir={}",
+            self.core.opts.dir.display(),
+            self.core.opts.value_dir.display()
+        )
     }
 }
 
