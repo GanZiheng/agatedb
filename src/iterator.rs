@@ -1,6 +1,6 @@
 use std::{
     cell::RefCell,
-    sync::{atomic::Ordering, Arc},
+    sync::{atomic::Ordering, Arc, Mutex},
 };
 
 use bytes::{Bytes, BytesMut};
@@ -9,7 +9,7 @@ use skiplist::{IterRef, KeyComparator, Skiplist};
 use crate::{
     format::user_key,
     get_ts, key_with_ts,
-    ops::transaction::{Transaction, AGATE_PREFIX},
+    ops::transaction::{Transaction, TransactionInner, AGATE_PREFIX},
     table::{MergeIterator, TableIterators},
     value::{ValuePointer, VALUE_POINTER},
     wal::Wal,
@@ -192,9 +192,9 @@ impl<C: KeyComparator> AgateIterator for SkiplistIterator<C> {
     }
 }
 
-pub struct Iterator<'a> {
+pub struct Iterator {
     pub(crate) table_iter: Box<TableIterators>,
-    txn: &'a Transaction,
+    txn: Arc<Mutex<TransactionInner>>,
     read_ts: u64,
 
     pub(crate) opt: IteratorOptions,
@@ -215,21 +215,24 @@ impl Transaction {
     /// iterator is created, then that iterator will not be able to see those writes. Only
     /// writes performed before an iterator was created can be viewed.
     pub fn new_iterator(&self, opt: &IteratorOptions) -> Iterator {
-        if self.discarded {
+        if self.inner.lock().unwrap().discarded {
             panic!("Transaction has already been discarded.")
         }
 
         // TODO: Check DB closed.
 
-        self.num_iterators
+        self.inner
+            .lock()
+            .unwrap()
+            .num_iterators
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
-        let tables = self.core.get_mem_tables();
+        let tables = self.inner.lock().unwrap().core.get_mem_tables();
         // We need to get a reference to vlog, to avoid vlog GC (not implemented).
-        let _vlog = self.core.vlog.clone();
+        let _vlog = self.inner.lock().unwrap().core.vlog.clone();
 
         let mut iters: Vec<TableIterators> = vec![];
-        if let Some(itr) = self.new_pending_writes_iterator(opt.reverse) {
+        if let Some(itr) = self.inner.lock().unwrap().new_pending_writes_iterator(opt.reverse) {
             iters.push(TableIterators::from(itr));
         }
         for table in tables {
@@ -239,12 +242,17 @@ impl Transaction {
             )));
         }
 
-        self.core.lvctl.append_iterators(&mut iters, opt);
+        self.inner
+            .lock()
+            .unwrap()
+            .core
+            .lvctl
+            .append_iterators(&mut iters, opt);
 
         Iterator {
             table_iter: MergeIterator::from_iterators(iters, opt.reverse),
-            txn: self,
-            read_ts: self.read_ts,
+            txn: self.inner.clone(),
+            read_ts: self.inner.lock().unwrap().read_ts,
             opt: opt.clone(),
             item: None,
             last_key: BytesMut::new(),
@@ -252,11 +260,14 @@ impl Transaction {
     }
 }
 
-impl<'a> Iterator<'a> {
+impl Iterator {
     /// Returns pointer to the current key-value pair.
     /// This item is only valid until `next` gets called.
     pub fn item(&self) -> &Item {
-        self.txn.add_read_key(&self.item.as_ref().unwrap().key);
+        self.txn
+            .lock()
+            .unwrap()
+            .add_read_key(&self.item.as_ref().unwrap().key);
         self.item.as_ref().unwrap()
     }
 
@@ -309,7 +320,7 @@ impl<'a> Iterator<'a> {
         if self.opt.all_versions {
             // Return deleted or expired values also, otherwise user can't figure out
             // whether the key was deleted.
-            let mut item = Item::new(self.txn.core.clone());
+            let mut item = Item::new(self.txn.lock().unwrap().core.clone());
             Self::fill_item(&mut item, key, &self.table_iter.value(), &self.opt);
             self.item = Some(item);
             self.table_iter.next();
@@ -339,7 +350,7 @@ impl<'a> Iterator<'a> {
                 return false;
             }
 
-            let mut item = Item::new(self.txn.core.clone());
+            let mut item = Item::new(self.txn.lock().unwrap().core.clone());
             Self::fill_item(&mut item, key, &self.table_iter.value(), &self.opt);
 
             self.table_iter.next();
@@ -383,7 +394,7 @@ impl<'a> Iterator<'a> {
     /// Behavior would be reversed if iterating backwards.
     pub fn seek(&mut self, key: &Bytes) {
         if !key.is_empty() {
-            self.txn.add_read_key(key);
+            self.txn.lock().unwrap().add_read_key(key);
         }
 
         self.last_key.clear();
@@ -397,7 +408,7 @@ impl<'a> Iterator<'a> {
         }
 
         let key = if !self.opt.reverse {
-            key_with_ts(BytesMut::from(&key[..]), self.txn.read_ts)
+            key_with_ts(BytesMut::from(&key[..]), self.txn.lock().unwrap().read_ts)
         } else {
             key_with_ts(BytesMut::from(&key[..]), 0)
         };
@@ -414,8 +425,12 @@ impl<'a> Iterator<'a> {
     }
 }
 
-impl<'a> Drop for Iterator<'a> {
+impl Drop for Iterator {
     fn drop(&mut self) {
-        self.txn.num_iterators.fetch_sub(1, Ordering::SeqCst);
+        self.txn
+            .lock()
+            .unwrap()
+            .num_iterators
+            .fetch_sub(1, Ordering::SeqCst);
     }
 }

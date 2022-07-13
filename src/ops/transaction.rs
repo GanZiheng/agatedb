@@ -23,7 +23,7 @@ const MAX_KEY_LENGTH: usize = 65000;
 pub const AGATE_PREFIX: &[u8] = b"!agate!";
 pub const TXN_KEY: &[u8] = b"!agate!txn";
 
-pub struct Transaction {
+pub(crate) struct TransactionInner {
     pub(crate) read_ts: u64,
     pub(crate) commit_ts: u64,
     pub(crate) size: usize,
@@ -48,6 +48,10 @@ pub struct Transaction {
     pub(crate) core: Arc<crate::db::Core>,
 }
 
+pub struct Transaction {
+    pub(crate) inner: Arc<Mutex<TransactionInner>>,
+}
+
 pub struct PendingWritesIterator {
     entries: Vec<Entry>,
     next_idx: usize,
@@ -56,9 +60,9 @@ pub struct PendingWritesIterator {
     key: BytesMut,
 }
 
-impl Transaction {
-    pub(crate) fn new(core: Arc<crate::db::Core>) -> Transaction {
-        Transaction {
+impl TransactionInner {
+    pub(crate) fn new(core: Arc<crate::db::Core>) -> Self {
+        Self {
             read_ts: 0,
             commit_ts: 0,
             size: 0,
@@ -170,33 +174,24 @@ impl Transaction {
         Ok(())
     }
 
-    /// Adds a key-value pair to the database.
-    pub fn set(&mut self, key: Bytes, value: Bytes) -> Result<()> {
+    fn set(&mut self, key: Bytes, value: Bytes) -> Result<()> {
         self.set_entry(Entry::new(key, value))?;
         Ok(())
     }
 
-    /// Takes an [`Entry`] struct and adds the key-value pair in the struct,
-    /// along with other metadata to the database.
-    pub fn set_entry(&mut self, e: Entry) -> Result<()> {
+    fn set_entry(&mut self, e: Entry) -> Result<()> {
         self.modify(e)?;
         Ok(())
     }
 
-    /// Delete deletes a key.
-    ///
-    /// This is done by adding a delete marker for the key at commit timestamp.  Any
-    /// reads happening before this timestamp would be unaffected. Any reads after
-    /// this commit would see the deletion.
-    pub fn delete(&mut self, key: Bytes) -> Result<()> {
+    fn delete(&mut self, key: Bytes) -> Result<()> {
         let mut e = Entry::new(key, Bytes::new());
         e.mark_delete();
         self.modify(e)?;
         Ok(())
     }
 
-    /// Looks for key and returns corresponding Item.
-    pub fn get(&self, key: &Bytes) -> Result<Item> {
+    fn get(&self, key: &Bytes) -> Result<Item> {
         if key.is_empty() {
             return Err(Error::EmptyKey);
         } else if self.discarded {
@@ -259,11 +254,7 @@ impl Transaction {
         }
     }
 
-    /// Discards a created transaction.
-    ///
-    /// This method is very important and must be called. `commit` method calls this
-    /// internally, and calling this multiple times doesn't cause any issues.
-    pub fn discard(&mut self) {
+    fn discard(&mut self) {
         if self.discarded {
             // Avoid a re-run.
             return;
@@ -382,6 +373,66 @@ impl Transaction {
         Ok(())
     }
 
+    fn commit(&mut self) -> Result<()> {
+        if self.pending_writes.is_empty() {
+            return Ok(());
+        }
+
+        self.commit_precheck()?;
+
+        self.commit_and_send()?;
+        // TODO: Callback.
+
+        Ok(())
+    }
+}
+
+impl Drop for TransactionInner {
+    fn drop(&mut self) {
+        self.discard();
+    }
+}
+
+impl Transaction {
+    pub fn new(core: Arc<crate::db::Core>) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(TransactionInner::new(core))),
+        }
+    }
+
+    /// Adds a key-value pair to the database.
+    pub fn set(&mut self, key: Bytes, value: Bytes) -> Result<()> {
+        self.inner.lock().unwrap().set(key, value)
+    }
+
+    /// Takes an [`Entry`] struct and adds the key-value pair in the struct,
+    /// along with other metadata to the database.
+    pub fn set_entry(&mut self, e: Entry) -> Result<()> {
+        self.inner.lock().unwrap().set_entry(e)
+    }
+
+    /// Delete deletes a key.
+    ///
+    /// This is done by adding a delete marker for the key at commit timestamp.  Any
+    /// reads happening before this timestamp would be unaffected. Any reads after
+    /// this commit would see the deletion.
+    pub fn delete(&mut self, key: Bytes) -> Result<()> {
+        self.inner.lock().unwrap().delete(key)
+    }
+
+    /// Looks for key and returns corresponding Item.
+    pub fn get(&self, key: &Bytes) -> Result<Item> {
+        self.inner.lock().unwrap().get(key)
+    }
+
+    /// Discards a created transaction.
+    ///
+    /// This method is very important and must be called. `commit` method calls this
+    /// internally, and calling this multiple times doesn't cause any issues.
+    pub fn discard(&mut self) {
+        self.inner.lock().unwrap().discard()
+    }
+
     /// Commits the transaction, following these steps:
     ///
     /// 1. If there are no writes, return immediately.
@@ -400,23 +451,16 @@ impl Transaction {
     ///
     /// If error is nil, the transaction is successfully committed. In case of a non-nil
     /// error, the LSM tree won't be updated, so there's no need for any rollback.
-    pub(crate) fn commit(mut self) -> Result<()> {
-        if self.pending_writes.is_empty() {
-            return Ok(());
-        }
-
-        self.commit_precheck()?;
-
-        self.commit_and_send()?;
-        // TODO: Callback.
-
-        Ok(())
+    pub fn commit(&mut self) -> Result<()> {
+        self.inner.lock().unwrap().commit()
     }
-}
 
-impl Drop for Transaction {
-    fn drop(&mut self) {
-        self.discard();
+    pub fn set_commit_ts(&mut self, commit_ts: u64) {
+        self.inner.lock().unwrap().commit_ts = commit_ts;
+    }
+
+    pub fn set_read_ts(&mut self, read_ts: u64) {
+        self.inner.lock().unwrap().read_ts = read_ts;
     }
 }
 
@@ -493,16 +537,16 @@ impl AgateIterator for PendingWritesIterator {
 
 impl crate::db::Core {
     pub fn new_transaction(self: &Arc<Self>, update: bool, is_managed: bool) -> Transaction {
-        let mut txn = Transaction::new(self.clone());
+        let txn = Transaction::new(self.clone());
 
-        txn.update = if self.opts.read_only { false } else { update };
-        txn.count = 1;
-        txn.size = TXN_KEY.len() + 10;
+        txn.inner.lock().unwrap().update = if self.opts.read_only { false } else { update };
+        txn.inner.lock().unwrap().count = 1;
+        txn.inner.lock().unwrap().size = TXN_KEY.len() + 10;
 
         // TODO: Allocate transaction conflict_keys and pending_writes on demand.
 
         if !is_managed {
-            txn.read_ts = self.orc.read_ts();
+            txn.inner.lock().unwrap().read_ts = self.orc.read_ts();
         }
 
         txn

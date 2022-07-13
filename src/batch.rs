@@ -45,7 +45,7 @@ impl Agate {
         }
 
         let mut txn = self.core.new_transaction(true, true);
-        txn.commit_ts = commit_ts;
+        txn.set_commit_ts(commit_ts);
         WriteBatch {
             txn,
             core: self.core.clone(),
@@ -92,8 +92,8 @@ impl WriteBatch {
         }
 
         let mut new_txn = self.core.new_transaction(true, self.is_managed);
-        new_txn.commit_ts = self.commit_ts;
-        let txn = std::mem::replace(&mut self.txn, new_txn);
+        new_txn.set_commit_ts(self.commit_ts);
+        let mut txn = std::mem::replace(&mut self.txn, new_txn);
         txn.commit()?;
 
         Ok(())

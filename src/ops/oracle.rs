@@ -5,7 +5,7 @@ use std::{
 
 use yatp::{task::callback::TaskCell, Builder, ThreadPool};
 
-use super::transaction::Transaction;
+use super::transaction::TransactionInner;
 use crate::{closer::Closer, watermark::WaterMark, AgateOptions};
 
 struct CommittedTxn {
@@ -43,7 +43,7 @@ impl CommitInfo {
         self.committed_txns.retain(|txn| txn.ts > max_read_ts);
     }
 
-    fn has_conflict(&self, txn: &Transaction) -> bool {
+    fn has_conflict(&self, txn: &TransactionInner) -> bool {
         let reads = txn.reads.lock().unwrap();
 
         if reads.is_empty() {
@@ -174,7 +174,7 @@ impl Oracle {
         }
     }
 
-    pub(crate) fn new_commit_ts(&self, txn: &mut Transaction) -> (u64, bool) {
+    pub(crate) fn new_commit_ts(&self, txn: &mut TransactionInner) -> (u64, bool) {
         let mut commit_info = self.commit_info.lock().unwrap();
 
         if commit_info.has_conflict(txn) {
@@ -207,7 +207,7 @@ impl Oracle {
         }
     }
 
-    pub(crate) fn done_read(&self, txn: &mut Transaction) {
+    pub(crate) fn done_read(&self, txn: &mut TransactionInner) {
         if !txn.done_read {
             txn.done_read = true;
             self.read_mark.done(txn.read_ts);
@@ -270,7 +270,7 @@ mod tests {
 
         let core = Arc::new(Core::new(&opts).unwrap());
 
-        let mut txn = Transaction::new(core.clone());
+        let mut txn = TransactionInner::new(core.clone());
         txn.conflict_keys = [11u64, 22, 33].iter().cloned().collect();
 
         // No conflict.
@@ -298,7 +298,7 @@ mod tests {
 
         let core = Arc::new(Core::new(&opts).unwrap());
 
-        let mut txn = Transaction::new(core.clone());
+        let mut txn = TransactionInner::new(core.clone());
 
         assert_eq!(core.orc.new_commit_ts(&mut txn), (0, false));
         assert_eq!(core.orc.commit_info.lock().unwrap().committed_txns.len(), 1);
