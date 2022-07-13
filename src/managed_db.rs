@@ -13,8 +13,8 @@ impl crate::db::Core {
             );
         }
 
-        let mut txn = self.new_transaction(update, true);
-        txn.read_ts = read_ts;
+        let txn = self.new_transaction(update, true);
+        txn.inner.lock().unwrap().read_ts = read_ts;
         txn
     }
 
@@ -47,10 +47,10 @@ impl Transaction {
     ///
     /// This will panic if not used with managed transactions.
     pub fn commit_at(mut self, commit_ts: u64) -> Result<()> {
-        if !self.core.opts.managed_txns {
+        if !self.inner.lock().unwrap().core.opts.managed_txns {
             panic!("Cannot use commit_at when managed_txns is false. Use commit_at instead.");
         }
-        self.commit_ts = commit_ts;
+        self.inner.lock().unwrap().commit_ts = commit_ts;
         self.commit()?;
         Ok(())
     }

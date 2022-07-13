@@ -341,7 +341,7 @@ mod normal_db {
 
             for i in 1..10 {
                 let mut txn = agate.new_transaction(true);
-                txn.read_ts = i; // Read version at i.
+                txn.set_read_ts(i); // Read version at i.
 
                 let item = txn.get(&key).unwrap();
                 let value = item.value();
@@ -506,19 +506,19 @@ mod normal_db {
             check_iterator(it, vec!["c2", "a3"]);
             check_iterator(it5, vec!["b4", "a3"]);
 
-            txn.read_ts = 3;
+            txn.set_read_ts(3);
             let it = txn.new_iterator(&IteratorOptions::default());
             check_iterator(it, vec!["a3", "b3", "c2"]);
             let it = txn.new_iterator(&rev);
             check_iterator(it, vec!["c2", "b3", "a3"]);
 
-            txn.read_ts = 2;
+            txn.set_read_ts(2);
             let it = txn.new_iterator(&IteratorOptions::default());
             check_iterator(it, vec!["a2", "c2"]);
             let it = txn.new_iterator(&rev);
             check_iterator(it, vec!["c2", "a2"]);
 
-            txn.read_ts = 1;
+            txn.set_read_ts(1);
             let it = txn.new_iterator(&IteratorOptions::default());
             check_iterator(it, vec!["c1"]);
             let it = txn.new_iterator(&rev);
@@ -596,7 +596,7 @@ mod normal_db {
             let it = txn.new_iterator(&rev);
             check_iterator(it, vec!["c2", "a3"]);
 
-            txn.read_ts = 5;
+            txn.set_read_ts(5);
             {
                 let mut it = txn.new_iterator(&IteratorOptions::default());
                 it.seek(&ka);
@@ -615,19 +615,19 @@ mod normal_db {
                 assert_bytes_eq!(&it.item().key, &kc);
             }
 
-            txn.read_ts = 3;
+            txn.set_read_ts(3);
             let it = txn.new_iterator(&IteratorOptions::default());
             check_iterator(it, vec!["a3", "b3", "c2"]);
             let it = txn.new_iterator(&rev);
             check_iterator(it, vec!["c2", "b3", "a3"]);
 
-            txn.read_ts = 2;
+            txn.set_read_ts(2);
             let it = txn.new_iterator(&IteratorOptions::default());
             check_iterator(it, vec!["a2", "c2"]);
             let it = txn.new_iterator(&rev);
             check_iterator(it, vec!["c2", "a2"]);
 
-            txn.read_ts = 1;
+            txn.set_read_ts(1);
             let it = txn.new_iterator(&IteratorOptions::default());
             check_iterator(it, vec!["c1"]);
             let it = txn.new_iterator(&rev);
@@ -791,7 +791,7 @@ mod normal_db {
 
             agate
                 .view(|txn| {
-                    txn.read_ts = 2;
+                    txn.set_read_ts(2);
                     let mut it = txn.new_iterator(&IteratorOptions {
                         all_versions: true,
                         ..Default::default()
