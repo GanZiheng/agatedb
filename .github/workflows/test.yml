@@ -3,10 +3,12 @@ on:
     branches:
       - master
       - develop
+      - integrate-tikv
   pull_request:
     branches:
       - master
       - develop
+      - integrate-tikv
 
 name: Test
 
