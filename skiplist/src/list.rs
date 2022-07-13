@@ -420,6 +420,8 @@ where
     _key_cmp: std::marker::PhantomData<C>,
 }
 
+unsafe impl<T, C> Send for IterRef<T, C> where T: AsRef<Skiplist<C>> {}
+
 impl<T: AsRef<Skiplist<C>>, C: KeyComparator> IterRef<T, C> {
     pub fn valid(&self) -> bool {
         !self.cursor.is_null()

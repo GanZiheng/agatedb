@@ -232,7 +232,12 @@ impl Transaction {
         let _vlog = self.inner.lock().unwrap().core.vlog.clone();
 
         let mut iters: Vec<TableIterators> = vec![];
-        if let Some(itr) = self.inner.lock().unwrap().new_pending_writes_iterator(opt.reverse) {
+        if let Some(itr) = self
+            .inner
+            .lock()
+            .unwrap()
+            .new_pending_writes_iterator(opt.reverse)
+        {
             iters.push(TableIterators::from(itr));
         }
         for table in tables {
