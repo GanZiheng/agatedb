@@ -131,6 +131,50 @@ impl AgateIterator for ConcatIterator {
             false
         }
     }
+
+    fn prev(&mut self) {
+        let cur = self.cur.unwrap();
+        let cur_iter = self.iter_mut();
+        cur_iter.prev();
+        if cur_iter.valid() {
+            return;
+        }
+
+        loop {
+            if self.opt & ITERATOR_REVERSED == 0 {
+                if cur == 0 {
+                    self.cur = None
+                } else {
+                    self.set_idx(cur - 1);
+                }
+            } else {
+                self.set_idx(cur + 1);
+            }
+
+            if self.cur.is_some() {
+                self.iter_mut().to_last();
+                if self.iter_ref().valid() {
+                    return;
+                }
+            } else {
+                return;
+            }
+        }
+    }
+
+    fn to_last(&mut self) {
+        if self.iters.is_empty() {
+            return;
+        }
+
+        if self.opt & ITERATOR_REVERSED == 0 {
+            self.set_idx(self.iters.len() - 1);
+        } else {
+            self.set_idx(0);
+        }
+
+        self.iter_mut().rewind();
+    }
 }
 
 #[cfg(test)]

@@ -75,6 +75,17 @@ impl IteratorNode {
         self.iter.seek(key);
         self.set_key();
     }
+
+    fn prev(&mut self) {
+        self.iter.prev();
+        self.set_key();
+    }
+
+    #[allow(clippy::wrong_self_convention)]
+    fn to_last(&mut self) {
+        self.iter.to_last();
+        self.set_key();
+    }
 }
 
 impl MergeIterator {
@@ -230,6 +241,38 @@ impl AgateIterator for MergeIterator {
     fn valid(&self) -> bool {
         self.smaller().valid
     }
+
+    fn prev(&mut self) {
+        // TODO: Re-examine this.
+
+        self.bigger_mut().prev();
+        if !self.bigger().valid {
+            self.smaller_mut().prev();
+            if self.smaller().valid {
+                self.bigger_mut().rewind();
+            }
+        } else {
+            self.smaller_mut().prev();
+            if !self.smaller().valid {
+                self.smaller_mut().rewind();
+            } else {
+                // Assume keys are different.
+                self.fix();
+                self.smaller_mut().next();
+            }
+        }
+
+        self.fix();
+        self.set_current();
+    }
+
+    fn to_last(&mut self) {
+        self.left.to_last();
+        self.right.to_last();
+        self.fix();
+        self.set_current();
+        self.next();
+    }
 }
 
 #[cfg(test)]
@@ -240,7 +283,7 @@ mod tests {
 
     pub struct VecIterator {
         vec: Vec<Bytes>,
-        pos: usize,
+        pos: i64,
         reversed: bool,
     }
 
@@ -272,19 +315,27 @@ mod tests {
                     COMPARATOR.compare_key(&self.vec[idx], key) != Less
                 }
             });
-            self.pos = found_entry_idx;
+            self.pos = found_entry_idx as i64;
         }
 
         fn key(&self) -> &[u8] {
-            &self.vec[self.pos]
+            &self.vec[self.pos as usize]
         }
 
         fn value(&self) -> Value {
-            Value::new(self.vec[self.pos].clone())
+            Value::new(self.vec[self.pos as usize].clone())
         }
 
         fn valid(&self) -> bool {
-            self.pos < self.vec.len()
+            self.pos >= 0 && self.pos < self.vec.len() as i64
+        }
+
+        fn prev(&mut self) {
+            self.pos -= 1;
+        }
+
+        fn to_last(&mut self) {
+            self.pos = self.vec.len() as i64 - 1;
         }
     }
 
@@ -329,6 +380,41 @@ mod tests {
                 iter.next();
             }
         }
+
+        iter.rewind();
+
+        // test prev
+        for i in 0..n {
+            iter.seek(&key_with_ts(
+                BytesMut::from(format!("{:012x}", i).as_bytes()),
+                0,
+            ));
+
+            iter.prev();
+
+            if reversed {
+                if i == n - 1 {
+                    assert!(!iter.valid());
+                } else {
+                    let expected_key = format!("{:012x}", i + 1).to_string();
+                    assert_bytes_eq!(user_key(iter.key()), expected_key.as_bytes());
+                }
+            } else if i == 0 {
+                assert!(!iter.valid());
+            } else {
+                let expected_key = format!("{:012x}", i - 1).to_string();
+                assert_bytes_eq!(user_key(iter.key()), expected_key.as_bytes());
+            }
+        }
+
+        // test to_last
+        iter.to_last();
+        let expected_key = if reversed {
+            format!("{:012x}", 0)
+        } else {
+            format!("{:012x}", n - 1)
+        };
+        assert_bytes_eq!(user_key(iter.key()), expected_key.as_bytes());
     }
 
     fn check_sequence(iter: Box<Iterators>, n: usize) {
@@ -350,6 +436,7 @@ mod tests {
             ));
             assert_bytes_eq!(user_key(iter.key()), format!("{:012x}", i).as_bytes());
         }
+
         let mut data = gen_vec_data(0xfff, |_| true);
         data.reverse();
         let mut iter = VecIterator::new(data, true);
@@ -360,6 +447,46 @@ mod tests {
             ));
             assert_bytes_eq!(user_key(iter.key()), format!("{:012x}", i).as_bytes());
         }
+    }
+
+    #[test]
+    fn test_vec_iter_prev() {
+        let data = gen_vec_data(0xfff, |_| true);
+        let mut iter = VecIterator::new(data, false);
+        for i in 1..0xfff {
+            iter.seek(&key_with_ts(
+                BytesMut::from(format!("{:012x}", i).as_bytes()),
+                0,
+            ));
+            iter.prev();
+            assert_bytes_eq!(user_key(iter.key()), format!("{:012x}", i - 1).as_bytes());
+        }
+
+        let mut data = gen_vec_data(0xfff, |_| true);
+        data.reverse();
+        let mut iter = VecIterator::new(data, true);
+        for i in 0..0xfff - 1 {
+            iter.seek(&key_with_ts(
+                BytesMut::from(format!("{:012x}", i).as_bytes()),
+                0,
+            ));
+            iter.prev();
+            assert_bytes_eq!(user_key(iter.key()), format!("{:012x}", i + 1).as_bytes());
+        }
+    }
+
+    #[test]
+    fn test_vec_to_last() {
+        let data = gen_vec_data(10, |_| true);
+        let mut iter = VecIterator::new(data, false);
+        iter.to_last();
+        assert_bytes_eq!(user_key(iter.key()), format!("{:012x}", 9).as_bytes());
+
+        let mut data = gen_vec_data(0xfff, |_| true);
+        data.reverse();
+        let mut iter = VecIterator::new(data, true);
+        iter.to_last();
+        assert_bytes_eq!(user_key(iter.key()), format!("{:012x}", 0).as_bytes());
     }
 
     #[test]

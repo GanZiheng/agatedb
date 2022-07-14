@@ -54,7 +54,7 @@ pub struct Transaction {
 
 pub struct PendingWritesIterator {
     entries: Vec<Entry>,
-    next_idx: usize,
+    next_idx: i64,
     read_ts: u64,
     reversed: bool,
     key: BytesMut,
@@ -477,7 +477,7 @@ impl PendingWritesIterator {
 
     fn update_key(&mut self) {
         if self.valid() {
-            let entry = &self.entries[self.next_idx];
+            let entry = &self.entries[self.next_idx as usize];
             self.key.clear();
             self.key.extend_from_slice(&entry.key);
             append_ts(&mut self.key, self.read_ts);
@@ -508,7 +508,7 @@ impl AgateIterator for PendingWritesIterator {
             } else {
                 cmp != Greater
             }
-        });
+        }) as i64;
 
         self.update_key();
     }
@@ -520,7 +520,7 @@ impl AgateIterator for PendingWritesIterator {
 
     fn value(&self) -> Value {
         assert!(self.valid());
-        let entry = &self.entries[self.next_idx];
+        let entry = &self.entries[self.next_idx as usize];
         Value {
             meta: entry.meta,
             user_meta: entry.user_meta,
@@ -531,7 +531,17 @@ impl AgateIterator for PendingWritesIterator {
     }
 
     fn valid(&self) -> bool {
-        self.next_idx < self.entries.len()
+        self.next_idx >= 0 && self.next_idx < self.entries.len() as i64
+    }
+
+    fn prev(&mut self) {
+        assert!(self.next_idx > 0);
+        self.next_idx -= 1;
+        self.update_key();
+    }
+
+    fn to_last(&mut self) {
+        self.next_idx = self.entries.len() as i64 - 1;
     }
 }
 
