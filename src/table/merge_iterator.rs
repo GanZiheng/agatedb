@@ -247,16 +247,23 @@ impl AgateIterator for MergeIterator {
 
         self.bigger_mut().prev();
         if !self.bigger().valid {
+            // Prev element is in the smaller.
             self.smaller_mut().prev();
             if self.smaller().valid {
+                // Only when smaller has prev element, should we rewind the bigger.
+                // Otherwise, current element is the first element, we should make
+                // both smaller and bigger invalid.
                 self.bigger_mut().rewind();
             }
         } else {
+            // We should check where does the prev element come from.
             self.smaller_mut().prev();
             if !self.smaller().valid {
+                // Prev element is in the bigger, simply rewind the smaller.
                 self.smaller_mut().rewind();
             } else {
-                // Assume keys are different.
+                // Note: Assume keys are different.
+                // Both smaller and bigger have prev element, fix and let the smaller step forward.
                 self.fix();
                 self.smaller_mut().next();
             }
@@ -271,7 +278,10 @@ impl AgateIterator for MergeIterator {
         self.right.to_last();
         self.fix();
         self.set_current();
-        self.next();
+
+        if self.bigger_mut().valid {
+            self.next();
+        }
     }
 }
 
@@ -409,6 +419,7 @@ mod tests {
 
         // test to_last
         iter.to_last();
+        assert!(iter.valid());
         let expected_key = if reversed {
             format!("{:012x}", 0)
         } else {
@@ -537,5 +548,26 @@ mod tests {
         check_sequence(MergeIterator::from_iterators(iters, false), 0xfff);
 
         check_reverse_sequence(MergeIterator::from_iterators(rev_iters, true), 0xfff);
+    }
+
+    #[test]
+    fn test_merge_full_empty() {
+        let a = gen_vec_data(0xfff, |_| true);
+        let b = gen_vec_data(0xfff, |_| false);
+        let mut rev_a = a.clone();
+        rev_a.reverse();
+        let mut rev_b = b.clone();
+        rev_b.reverse();
+
+        let iter_a = Iterators::from(VecIterator::new(a, false));
+        let iter_b = Iterators::from(VecIterator::new(b, false));
+        let merge_iter = MergeIterator::from_iterators(vec![iter_a, iter_b], false);
+
+        check_sequence(merge_iter, 0xfff);
+
+        let iter_a = Iterators::from(VecIterator::new(rev_a, true));
+        let iter_b = Iterators::from(VecIterator::new(rev_b, true));
+        let merge_iter = MergeIterator::from_iterators(vec![iter_a, iter_b], true);
+        check_reverse_sequence(merge_iter, 0xfff);
     }
 }
