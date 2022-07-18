@@ -173,7 +173,7 @@ impl AgateIterator for ConcatIterator {
             self.set_idx(0);
         }
 
-        self.iter_mut().rewind();
+        self.iter_mut().to_last();
     }
 }
 
@@ -217,28 +217,71 @@ mod tests {
     #[test]
     fn test_concat_iterator() {
         let (tables, cnt) = build_test_tables();
-        let mut iter = ConcatIterator::from_tables(tables, 0);
 
-        iter.rewind();
+        let check = |tables: Vec<Table>, reversed: bool| {
+            let opt = if reversed { ITERATOR_REVERSED } else { 0 };
+            let mut iter = ConcatIterator::from_tables(tables, opt);
 
-        // test iterate
-        for i in 0..cnt {
-            assert!(iter.valid());
-            assert_eq!(user_key(iter.key()), format!("{:012x}", i).as_bytes());
-            iter.next();
-        }
-        assert!(!iter.valid());
+            iter.rewind();
 
-        // test seek
-        for i in 10..cnt - 10 {
-            iter.seek(&key_with_ts(
-                BytesMut::from(format!("{:012x}", i).as_bytes()),
-                0,
-            ));
-            for j in 0..10 {
-                assert_eq!(user_key(iter.key()), format!("{:012x}", i + j).as_bytes());
+            // test iterate
+            for i in 0..cnt {
+                assert!(iter.valid());
+                if !reversed {
+                    assert_eq!(user_key(iter.key()), format!("{:012x}", i).as_bytes());
+                } else {
+                    assert_eq!(
+                        user_key(iter.key()),
+                        format!("{:012x}", cnt - i - 1).as_bytes()
+                    );
+                }
                 iter.next();
             }
-        }
+            assert!(!iter.valid());
+
+            // test seek
+            for i in 10..cnt - 10 {
+                iter.seek(&key_with_ts(
+                    BytesMut::from(format!("{:012x}", i).as_bytes()),
+                    0,
+                ));
+                for j in 0..10 {
+                    if !reversed {
+                        assert_eq!(user_key(iter.key()), format!("{:012x}", i + j).as_bytes());
+                    } else {
+                        assert_eq!(user_key(iter.key()), format!("{:012x}", i - j).as_bytes());
+                    }
+                    iter.next();
+                }
+            }
+
+            // test prev
+            for i in 10..cnt - 10 {
+                iter.seek(&key_with_ts(
+                    BytesMut::from(format!("{:012x}", i).as_bytes()),
+                    0,
+                ));
+                for j in 0..10 {
+                    if !reversed {
+                        assert_eq!(user_key(iter.key()), format!("{:012x}", i - j).as_bytes());
+                    } else {
+                        assert_eq!(user_key(iter.key()), format!("{:012x}", i + j).as_bytes());
+                    }
+                    iter.prev();
+                }
+            }
+
+            // test to_last
+            iter.to_last();
+            if !reversed {
+                assert_eq!(user_key(iter.key()), format!("{:012x}", cnt - 1).as_bytes());
+            } else {
+                assert_eq!(user_key(iter.key()), format!("{:012x}", 0).as_bytes());
+            }
+        };
+
+        check(tables.clone(), false);
+
+        check(tables, true);
     }
 }
