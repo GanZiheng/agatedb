@@ -245,7 +245,9 @@ impl AgateIterator for MergeIterator {
     fn prev(&mut self) {
         // TODO: Re-examine this.
 
+        // TODO: Avoid calling prev when iterator is invalid.
         self.bigger_mut().prev();
+
         if !self.bigger().valid {
             // Prev element is in the smaller.
             self.smaller_mut().prev();
@@ -349,7 +351,7 @@ mod tests {
         }
     }
 
-    fn gen_vec_data(n: usize, predicate: impl Fn(usize) -> bool) -> Vec<Bytes> {
+    pub fn gen_vec_data(n: usize, predicate: impl Fn(usize) -> bool) -> Vec<Bytes> {
         (0..n)
             .filter(|x| predicate(*x))
             .map(|i| key_with_ts(format!("{:012x}", i).as_str(), 0))

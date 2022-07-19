@@ -315,6 +315,18 @@ impl Iterator {
         self.item = None;
     }
 
+    pub fn prev(&mut self) {
+        self.table_iter.seek(&self.last_key.clone().freeze());
+        self.table_iter.prev();
+        while self.table_iter.valid() {
+            if self.parse_item_for_prev() {
+                return;
+            }
+        }
+
+        self.item = None;
+    }
+
     /// Handles both forward and reverse iteration implementation. We store keys such that
     /// their versions are sorted in descending order. This makes forward iteration
     /// efficient, but revese iteration complicated. This tradeoff is better because
@@ -348,20 +360,20 @@ impl Iterator {
             return true;
         }
 
-        // If iterating in forward direction, then just checking the last key against
-        // current key would be sufficient.
-        if !self.opt.reverse {
-            if crate::util::same_key(&self.last_key, key) {
-                self.table_iter.next();
-                return false;
-            }
-            // Only track in forward direction.
-            // We should update last_key as soon as we find a different key in our snapshot.
-            // Consider keys: a 5, b 7 (del), b 5. When iterating, last_key = a.
-            // Then we see b 7, which is deleted. If we don't store last_key = b, we'll then
-            // return b 5, which is wrong. Therefore, update last_key here.
+        // To support prev, we also should track last_key in forward direction.
+        let key_changed = if !crate::util::same_key(&self.last_key, key) {
             self.last_key.clear();
             self.last_key.extend_from_slice(key);
+            true
+        } else {
+            false
+        };
+
+        // If iterating in forward direction, then just checking the last key against
+        // current key would be sufficient.
+        if !self.opt.reverse && !key_changed {
+            self.table_iter.next();
+            return false;
         }
 
         loop {
@@ -375,12 +387,88 @@ impl Iterator {
             Self::fill_item(&mut item, key, &self.table_iter.value(), &self.opt);
 
             self.table_iter.next();
+
             if !self.opt.reverse || !self.table_iter.valid() {
                 self.item = Some(item);
                 return true;
             }
 
             // Reverse direction.
+            let next_ts = get_ts(self.table_iter.key());
+            let key_without_ts = user_key(self.table_iter.key());
+            if next_ts <= self.read_ts && key_without_ts == item.key {
+                // This is a valid potential candidate.
+                continue;
+            }
+            // Ignore the next candidate. Return the current one.
+            self.item = Some(item);
+            return true;
+        }
+    }
+
+    /// Just like `parse_item`, but used for `prev`.
+    ///
+    /// This function advances the iterator.
+    fn parse_item_for_prev(&mut self) -> bool {
+        #[allow(clippy::unnecessary_to_owned)]
+        let key: &[u8] = &self.table_iter.key().to_owned();
+
+        // Skip Agate keys.
+        if !self.opt.internal_access && key.starts_with(AGATE_PREFIX) {
+            self.table_iter.prev();
+            return false;
+        }
+
+        // Skip any versions which are beyond the read_ts.
+        let version = get_ts(key);
+        if version > self.read_ts {
+            self.table_iter.prev();
+            return false;
+        }
+
+        if self.opt.all_versions {
+            // Return deleted or expired values also, otherwise user can't figure out
+            // whether the key was deleted.
+            let mut item = Item::new(self.txn.lock().unwrap().core.clone());
+            Self::fill_item(&mut item, key, &self.table_iter.value(), &self.opt);
+            self.item = Some(item);
+            self.table_iter.prev();
+            return true;
+        }
+
+        // Opposite of `parse_item`, if iterating in forward direction, we should check until the
+        // key changes or we reach the end of the inner iterator; otherwise, we should use last_key
+        // to get the lastest version of a certian key.
+        let key_changed = if !crate::util::same_key(&self.last_key, key) {
+            self.last_key.clear();
+            self.last_key.extend_from_slice(key);
+            true
+        } else {
+            false
+        };
+
+        if self.opt.reverse && !key_changed {
+            self.table_iter.prev();
+            return false;
+        }
+
+        loop {
+            let vs = self.table_iter.value();
+            if is_deleted_or_expired(vs.meta, vs.expires_at) {
+                self.table_iter.prev();
+                return false;
+            }
+
+            let mut item = Item::new(self.txn.lock().unwrap().core.clone());
+            Self::fill_item(&mut item, key, &self.table_iter.value(), &self.opt);
+
+            self.table_iter.prev();
+            if self.opt.reverse || !self.table_iter.valid() {
+                self.item = Some(item);
+                return true;
+            }
+
+            // Forward direction.
             let next_ts = get_ts(self.table_iter.key());
             let key_without_ts = user_key(self.table_iter.key());
             if next_ts <= self.read_ts && key_without_ts == item.key {
@@ -444,6 +532,18 @@ impl Iterator {
     pub fn rewind(&mut self) {
         self.seek(&Bytes::new());
     }
+
+    pub fn to_last(&mut self) {
+        // TODO: Re-examine this.
+
+        self.table_iter.to_last();
+
+        while self.table_iter.valid() {
+            if self.parse_item_for_prev() {
+                return;
+            }
+        }
+    }
 }
 
 impl Drop for Iterator {
@@ -453,5 +553,89 @@ impl Drop for Iterator {
             .unwrap()
             .num_iterators
             .fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{db::tests::*, entry::Entry};
+
+    #[test]
+    fn test_iterator() {
+        run_agate_test(None, |agate| {
+            let n = 100;
+
+            let key = |i| BytesMut::from(format!("key-{:012x}", i).as_bytes());
+            let value = |i| Bytes::from(format!("value-{:012x}", i));
+
+            let mut txn = agate.new_transaction(true);
+
+            for i in 0..n {
+                txn.set_entry(Entry::new(key(i).freeze(), value(i)))
+                    .unwrap();
+            }
+
+            let check = |txn: Transaction, reversed: bool| {
+                let mut iter = txn.new_iterator(&IteratorOptions {
+                    reverse: reversed,
+                    ..Default::default()
+                });
+
+                iter.rewind();
+
+                // test iterate
+                for i in 0..n {
+                    assert!(iter.valid());
+                    if !reversed {
+                        assert_eq!(iter.item().key, key(i));
+                    } else {
+                        assert_eq!(iter.item().key, key(n - i - 1));
+                    }
+                    iter.next();
+                }
+                assert!(!iter.valid());
+
+                // test seek
+                for i in 10..n - 10 {
+                    iter.seek(&key(i).freeze());
+
+                    for j in 0..10 {
+                        if !reversed {
+                            assert_eq!(iter.item().key, key(i + j));
+                        } else {
+                            assert_eq!(iter.item().key, key(i - j));
+                        }
+                        iter.next();
+                    }
+                }
+
+                // test prev
+                for i in 10..n - 10 {
+                    iter.seek(&key(i).freeze());
+
+                    for j in 0..10 {
+                        if !reversed {
+                            assert_eq!(iter.item().key, key(i - j));
+                        } else {
+                            assert_eq!(iter.item().key, key(i + j));
+                        }
+                        iter.prev();
+                    }
+                }
+
+                // test to_last
+                iter.to_last();
+                if !reversed {
+                    assert_eq!(iter.item().key, key(n - 1));
+                } else {
+                    assert_eq!(iter.item().key, key(0));
+                }
+            };
+
+            check(txn.clone(), false);
+
+            check(txn, true);
+        });
     }
 }

@@ -7,15 +7,13 @@ use std::{
 };
 
 use bytes::{Bytes, BytesMut};
-use skiplist::KeyComparator;
 
+use crate::util::default_hash;
 use crate::{
     entry::Entry,
     format::{append_ts, user_key},
     iterator::{is_deleted_or_expired, Item},
-    key_with_ts,
-    util::{default_hash, COMPARATOR},
-    Agate, AgateIterator, Error, Result, Value,
+    key_with_ts, Agate, AgateIterator, Error, Result, Value,
 };
 
 const MAX_KEY_LENGTH: usize = 65000;
@@ -48,6 +46,7 @@ pub(crate) struct TransactionInner {
     pub(crate) core: Arc<crate::db::Core>,
 }
 
+#[derive(Clone)]
 pub struct Transaction {
     pub(crate) inner: Arc<Mutex<TransactionInner>>,
 }
@@ -90,7 +89,7 @@ impl TransactionInner {
         // As each entry saves key / value as Bytes, there will only be overhead of pointer clone.
         let mut entries: Vec<_> = self.pending_writes.values().cloned().collect();
         entries.sort_by(|x, y| {
-            let cmp = COMPARATOR.compare_key(&x.key, &y.key);
+            let cmp = (&x.key).cmp(&y.key);
             if reversed {
                 cmp.reverse()
             } else {
@@ -535,7 +534,7 @@ impl AgateIterator for PendingWritesIterator {
     }
 
     fn prev(&mut self) {
-        assert!(self.next_idx > 0);
+        assert!(self.next_idx >= 0);
         self.next_idx -= 1;
         self.update_key();
     }

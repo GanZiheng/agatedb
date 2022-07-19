@@ -438,7 +438,10 @@ impl<T: AsRef<Skiplist<C>>, C: KeyComparator> IterRef<T, C> {
     }
 
     pub fn next(&mut self) {
-        assert!(self.valid());
+        if !self.valid() {
+            return;
+        }
+
         unsafe {
             let cursor_offset = (&*self.cursor).next_offset(0);
             self.cursor = self.list.as_ref().inner.arena.get_mut(cursor_offset);
@@ -446,7 +449,10 @@ impl<T: AsRef<Skiplist<C>>, C: KeyComparator> IterRef<T, C> {
     }
 
     pub fn prev(&mut self) {
-        assert!(self.valid());
+        if !self.valid() {
+            return;
+        }
+
         if self.list.as_ref().allow_concurrent_write {
             unsafe {
                 self.cursor = self.list.as_ref().find_near(self.key(), true, false);
