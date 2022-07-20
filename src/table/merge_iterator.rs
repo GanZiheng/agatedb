@@ -295,7 +295,7 @@ mod tests {
 
     pub struct VecIterator {
         vec: Vec<Bytes>,
-        pos: i64,
+        pos: usize,
         reversed: bool,
     }
 
@@ -311,7 +311,11 @@ mod tests {
 
     impl AgateIterator for VecIterator {
         fn next(&mut self) {
-            self.pos += 1;
+            if self.pos == std::usize::MAX {
+                self.rewind();
+            } else if self.pos < self.vec.len() {
+                self.pos += 1;
+            }
         }
 
         fn rewind(&mut self) {
@@ -327,27 +331,34 @@ mod tests {
                     COMPARATOR.compare_key(&self.vec[idx], key) != Less
                 }
             });
-            self.pos = found_entry_idx as i64;
+            self.pos = found_entry_idx;
         }
 
         fn key(&self) -> &[u8] {
-            &self.vec[self.pos as usize]
+            &self.vec[self.pos]
         }
 
         fn value(&self) -> Value {
-            Value::new(self.vec[self.pos as usize].clone())
+            Value::new(self.vec[self.pos].clone())
         }
 
         fn valid(&self) -> bool {
-            self.pos >= 0 && self.pos < self.vec.len() as i64
+            self.pos != std::usize::MAX && self.pos < self.vec.len()
         }
 
         fn prev(&mut self) {
-            self.pos -= 1;
+            if self.pos == std::usize::MAX {
+            } else if self.pos > 0 {
+                self.pos -= 1;
+            } else {
+                self.pos = std::usize::MAX;
+            }
         }
 
         fn to_last(&mut self) {
-            self.pos = self.vec.len() as i64 - 1;
+            if !self.vec.is_empty() {
+                self.pos = self.vec.len() - 1;
+            }
         }
     }
 
@@ -500,6 +511,65 @@ mod tests {
         let mut iter = VecIterator::new(data, true);
         iter.to_last();
         assert_bytes_eq!(user_key(iter.key()), format!("{:012x}", 0).as_bytes());
+    }
+
+    #[test]
+    fn test_vec_out_of_bound() {
+        let n = 100;
+        let data = gen_vec_data(n, |_| true);
+
+        let check = |mut data: Vec<Bytes>, reversed: bool| {
+            if reversed {
+                data.reverse();
+            }
+            let mut iter = VecIterator::new(data, reversed);
+
+            iter.rewind();
+            iter.prev();
+            assert!(!iter.valid());
+            iter.prev();
+            assert!(!iter.valid());
+            iter.next();
+            assert!(iter.valid());
+
+            iter.prev();
+            assert!(!iter.valid());
+            iter.prev();
+            assert!(!iter.valid());
+            iter.next();
+            assert!(iter.valid());
+
+            if !reversed {
+                assert_eq!(user_key(iter.key()), format!("{:012x}", 0).as_bytes());
+            } else {
+                assert_eq!(user_key(iter.key()), format!("{:012x}", n - 1).as_bytes());
+            }
+
+            iter.to_last();
+            iter.next();
+            assert!(!iter.valid());
+            iter.next();
+            assert!(!iter.valid());
+            iter.prev();
+            assert!(iter.valid());
+
+            iter.next();
+            assert!(!iter.valid());
+            iter.next();
+            assert!(!iter.valid());
+            iter.prev();
+            assert!(iter.valid());
+
+            if !reversed {
+                assert_eq!(user_key(iter.key()), format!("{:012x}", n - 1).as_bytes());
+            } else {
+                assert_eq!(user_key(iter.key()), format!("{:012x}", 0).as_bytes());
+            }
+        };
+
+        check(data.clone(), false);
+
+        check(data, true);
     }
 
     #[test]
