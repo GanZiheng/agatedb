@@ -60,6 +60,7 @@ impl AgateIterator for ConcatIterator {
             }
         }
 
+        #[allow(clippy::collapsible_else_if)]
         loop {
             if self.opt & ITERATOR_REVERSED == 0 {
                 if self.cur == std::usize::MAX {
@@ -157,6 +158,7 @@ impl AgateIterator for ConcatIterator {
             }
         }
 
+        #[allow(clippy::collapsible_else_if)]
         loop {
             if self.opt & ITERATOR_REVERSED == 0 {
                 if self.cur == std::usize::MAX {
@@ -365,6 +367,6 @@ mod tests {
 
         check(tables.clone(), false);
 
-        check(tables.clone(), true);
+        check(tables, true);
     }
 }

@@ -619,7 +619,7 @@ mod tests {
 
         check(skl.clone(), false);
 
-        check(skl.clone(), true);
+        check(skl, true);
     }
 
     #[test]
