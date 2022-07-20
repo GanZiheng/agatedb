@@ -559,7 +559,68 @@ impl Drop for Iterator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{db::tests::*, entry::Entry};
+    use crate::{db::tests::*, entry::Entry, util::make_comparator};
+
+    #[test]
+    fn test_skl_iterator_out_of_bound() {
+        let n = 100;
+        let skl = Skiplist::with_capacity(make_comparator(), 4 * 1024 * 1024, true);
+
+        for i in 0..n {
+            let key = key_with_ts(format!("{:012x}", i).as_str(), 0);
+            skl.put(key, Bytes::new());
+        }
+
+        let check = |skl: Skiplist<skiplist::FixedLengthSuffixComparator>, reversed: bool| {
+            let mut iter = TableIterators::from(SkiplistIterator::new(skl.iter(), reversed));
+
+            iter.rewind();
+            iter.prev();
+            assert!(!iter.valid());
+            iter.prev();
+            assert!(!iter.valid());
+            iter.next();
+            assert!(iter.valid());
+
+            iter.prev();
+            assert!(!iter.valid());
+            iter.prev();
+            assert!(!iter.valid());
+            iter.next();
+            assert!(iter.valid());
+
+            if !reversed {
+                assert_eq!(user_key(iter.key()), format!("{:012x}", 0).as_bytes());
+            } else {
+                assert_eq!(user_key(iter.key()), format!("{:012x}", n - 1).as_bytes());
+            }
+
+            iter.to_last();
+            iter.next();
+            assert!(!iter.valid());
+            iter.next();
+            assert!(!iter.valid());
+            iter.prev();
+            assert!(iter.valid());
+
+            iter.next();
+            assert!(!iter.valid());
+            iter.next();
+            assert!(!iter.valid());
+            iter.prev();
+            assert!(iter.valid());
+
+            if !reversed {
+                assert_eq!(user_key(iter.key()), format!("{:012x}", n - 1).as_bytes());
+            } else {
+                assert_eq!(user_key(iter.key()), format!("{:012x}", 0).as_bytes());
+            }
+        };
+
+        check(skl.clone(), false);
+
+        check(skl.clone(), true);
+    }
 
     #[test]
     fn test_iterator() {
