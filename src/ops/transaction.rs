@@ -244,6 +244,9 @@ impl TransactionInner {
         item.user_meta = vs.user_meta;
         item.vptr = vs.value;
         item.expires_at = vs.expires_at;
+
+        item.yield_item_value();
+
         Ok(item)
     }
 

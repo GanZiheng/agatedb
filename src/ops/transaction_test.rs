@@ -167,7 +167,7 @@ mod normal_db {
 
             let item = txn.get(&key(1)).unwrap();
 
-            assert_bytes_eq!(&item.value(), &value(1));
+            assert_bytes_eq!(item.value(), &value(1));
 
             txn.commit().unwrap();
         });
@@ -193,7 +193,7 @@ mod normal_db {
                         .view(|txn| {
                             let item = txn.get(&key).unwrap();
 
-                            assert_bytes_eq!(&item.value(), &key.clone());
+                            assert_bytes_eq!(item.value(), &key.clone());
 
                             Ok(())
                         })
@@ -302,7 +302,7 @@ mod normal_db {
                 while it.valid() {
                     let item = it.item();
                     assert_bytes_eq!(&item.key, &key);
-                    assert_bytes_eq!(&item.value(), &valversion(i));
+                    assert_bytes_eq!(item.value(), &valversion(i));
 
                     count += 1;
 
@@ -323,7 +323,7 @@ mod normal_db {
                     assert_eq!(item.version, version);
 
                     let value = item.value();
-                    assert_bytes_eq!(&value, &valversion(version));
+                    assert_bytes_eq!(value, &valversion(version));
 
                     count += 1;
 
@@ -345,7 +345,7 @@ mod normal_db {
 
                 let item = txn.get(&key).unwrap();
                 let value = item.value();
-                assert_bytes_eq!(&value, &valversion(i));
+                assert_bytes_eq!(value, &valversion(i));
 
                 let it = txn.new_iterator(&IteratorOptions::default());
                 check_iterator(it, i);
@@ -373,7 +373,7 @@ mod normal_db {
             let txn = agate.new_transaction(true);
             let item = txn.get(&key).unwrap();
             let value = item.value();
-            assert_bytes_eq!(&value, &valversion(9));
+            assert_bytes_eq!(value, &valversion(9));
         });
     }
 
@@ -482,7 +482,7 @@ mod normal_db {
                     let item = it.item();
                     let value = item.value();
 
-                    assert_bytes_eq!(&value, &Bytes::from(expectd[index]));
+                    assert_bytes_eq!(value, &Bytes::from(expectd[index]));
 
                     index += 1;
                     it.next();
@@ -577,7 +577,7 @@ mod normal_db {
                     let item = it.item();
                     let value = item.value();
 
-                    assert_bytes_eq!(&value, &Bytes::from(expectd[index]));
+                    assert_bytes_eq!(value, &Bytes::from(expectd[index]));
 
                     index += 1;
                     it.next();
@@ -863,7 +863,7 @@ mod normal_db {
                         assert_bytes_eq!(&item.key, &key);
 
                         if count % 2 != 0 {
-                            assert_bytes_eq!(&item.value(), &value);
+                            assert_bytes_eq!(item.value(), &value);
                         } else {
                             assert!(item.meta & VALUE_DELETE > 0);
                         }

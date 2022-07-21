@@ -1,7 +1,4 @@
-use std::{
-    cell::RefCell,
-    sync::{atomic::Ordering, Arc, Mutex},
-};
+use std::sync::{atomic::Ordering, Arc, Mutex};
 
 use bytes::{Bytes, BytesMut};
 use skiplist::{IterRef, KeyComparator, Skiplist};
@@ -30,7 +27,7 @@ impl Default for PrefetchStatus {
 pub struct Item {
     pub(crate) key: Bytes,
     pub(crate) vptr: Bytes,
-    value: RefCell<Bytes>,
+    value: Bytes,
     pub(crate) version: u64,
     pub(crate) expires_at: u64,
 
@@ -46,7 +43,7 @@ impl Item {
         Self {
             key: Bytes::new(),
             vptr: Bytes::new(),
-            value: RefCell::new(Bytes::new()),
+            value: Bytes::new(),
             version: 0,
             expires_at: 0,
             status: PrefetchStatus::No,
@@ -56,21 +53,18 @@ impl Item {
         }
     }
 
-    pub fn value(&self) -> Bytes {
-        if matches!(self.status, PrefetchStatus::No) {
-            self.yield_item_value()
-        }
-        return self.value.borrow().clone();
+    pub fn key(&self) -> &[u8] {
+        &self.key
     }
 
-    fn has_value(&self) -> bool {
-        !(self.meta == 0 && self.vptr.is_empty())
+    pub fn value(&self) -> &[u8] {
+        &self.value
     }
 
-    fn yield_item_value(&self) {
-        let mut value = self.value.borrow_mut();
+    pub(crate) fn yield_item_value(&mut self) {
+        let value = &mut self.value;
 
-        if !self.has_value() {
+        if self.meta == 0 && self.vptr.is_empty() {
             *value = Bytes::new();
             return;
         }
@@ -94,7 +88,7 @@ impl Item {
 
     pub(crate) fn set_value(&mut self, value: Bytes) {
         self.status = PrefetchStatus::Prefetched;
-        *self.value.borrow_mut() = value;
+        self.value = value;
     }
 }
 
@@ -490,12 +484,14 @@ impl Iterator {
         item.key = Bytes::copy_from_slice(user_key(key));
 
         item.vptr = vs.value.clone();
-        item.value = RefCell::new(Bytes::new());
+        item.value = Bytes::new();
         item.status = PrefetchStatus::No;
 
         if opts.prefetch_values {
             unimplemented!();
         }
+
+        item.yield_item_value();
     }
 
     /// Seeks to the provided key if present. If absent, it would seek to the next
