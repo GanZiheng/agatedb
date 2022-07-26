@@ -1,17 +1,15 @@
-use crate::Error;
-
-use crate::assert_bytes_eq;
+use crate::{assert_bytes_eq, Error};
 
 /// Tests in managed mode.
 mod managed_db {
+    use bytes::{Bytes, BytesMut};
+
+    use super::*;
     use crate::{
         db::tests::{generate_test_agate_options, run_agate_test, with_payload},
         entry::Entry,
         AgateOptions,
     };
-    use bytes::{Bytes, BytesMut};
-
-    use super::*;
 
     fn default_test_managed_opts() -> AgateOptions {
         let mut opts = generate_test_agate_options();
@@ -136,6 +134,12 @@ mod normal_db {
         Arc,
     };
 
+    use bytes::{Bytes, BytesMut};
+    use crossbeam_channel::select;
+    use rand::Rng;
+    use yatp::{task::callback::Handle, Builder};
+
+    use super::*;
     use crate::{
         closer::Closer,
         db::tests::{generate_test_agate_options, run_agate_test},
@@ -146,12 +150,34 @@ mod normal_db {
         value::VALUE_DELETE,
         Agate, AgateOptions,
     };
-    use bytes::{Bytes, BytesMut};
-    use crossbeam_channel::select;
-    use rand::Rng;
-    use yatp::{task::callback::Handle, Builder};
 
-    use super::*;
+    fn check_iterator(mut it: Iterator, expectd: Vec<&'_ str>) {
+        let mut index = 0;
+        it.rewind();
+        while it.valid() {
+            let item = it.item();
+            let value = item.value();
+
+            assert_bytes_eq!(value, &Bytes::from(expectd[index].to_string()));
+
+            it.next();
+
+            // Additional check for prev.
+            if it.valid() {
+                it.prev();
+
+                let item = it.item();
+                let value = item.value();
+
+                assert_bytes_eq!(value, &Bytes::from(expectd[index].to_string()));
+
+                it.next();
+            }
+
+            index += 1;
+        }
+        assert_eq!(expectd.len(), index);
+    }
 
     #[test]
     fn test_txn_simple() {
@@ -295,23 +321,6 @@ mod normal_db {
                 assert_eq!(i, agate.core.orc.read_ts());
             }
 
-            let check_iterator = |mut it: Iterator, i: u64| {
-                let mut count = 0;
-
-                it.rewind();
-                while it.valid() {
-                    let item = it.item();
-                    assert_bytes_eq!(&item.key, &key);
-                    assert_bytes_eq!(item.value(), &valversion(i));
-
-                    count += 1;
-
-                    it.next();
-                }
-
-                assert_eq!(count, 1);
-            };
-
             let check_all_versions = |mut it: Iterator, i: u64| {
                 let mut version = if it.opt.reverse { 1 } else { i };
 
@@ -325,6 +334,21 @@ mod normal_db {
                     let value = item.value();
                     assert_bytes_eq!(value, &valversion(version));
 
+                    it.next();
+
+                    if it.valid() {
+                        it.prev();
+
+                        let item = it.item();
+                        assert_bytes_eq!(&item.key, &key);
+                        assert_eq!(item.version, version);
+
+                        let value = item.value();
+                        assert_bytes_eq!(value, &valversion(version));
+
+                        it.next();
+                    }
+
                     count += 1;
 
                     if it.opt.reverse {
@@ -332,8 +356,6 @@ mod normal_db {
                     } else {
                         version -= 1;
                     }
-
-                    it.next();
                 }
 
                 assert_eq!(count, i);
@@ -348,13 +370,16 @@ mod normal_db {
                 assert_bytes_eq!(value, &valversion(i));
 
                 let it = txn.new_iterator(&IteratorOptions::default());
-                check_iterator(it, i);
+                check_iterator(it, vec![std::str::from_utf8(&valversion(i)).unwrap()]);
 
                 let reversed_it = txn.new_iterator(&IteratorOptions {
                     reverse: true,
                     ..Default::default()
                 });
-                check_iterator(reversed_it, i);
+                check_iterator(
+                    reversed_it,
+                    vec![std::str::from_utf8(&valversion(i)).unwrap()],
+                );
 
                 let it = txn.new_iterator(&IteratorOptions {
                     all_versions: true,
@@ -475,21 +500,6 @@ mod normal_db {
             txn.commit().unwrap();
             assert_eq!(agate.core.orc.read_ts(), 4);
 
-            let check_iterator = |mut it: Iterator, expectd: Vec<&'static str>| {
-                let mut index = 0;
-                it.rewind();
-                while it.valid() {
-                    let item = it.item();
-                    let value = item.value();
-
-                    assert_bytes_eq!(value, &Bytes::from(expectd[index]));
-
-                    index += 1;
-                    it.next();
-                }
-                assert_eq!(expectd.len(), index);
-            };
-
             let mut txn = agate.new_transaction(true);
             let rev = IteratorOptions {
                 reverse: true,
@@ -569,21 +579,6 @@ mod normal_db {
             txn.delete(kb).unwrap();
             txn.commit().unwrap();
             assert_eq!(agate.core.orc.read_ts(), 4);
-
-            let check_iterator = |mut it: Iterator, expectd: Vec<&'static str>| {
-                let mut index = 0;
-                it.rewind();
-                while it.valid() {
-                    let item = it.item();
-                    let value = item.value();
-
-                    assert_bytes_eq!(value, &Bytes::from(expectd[index]));
-
-                    index += 1;
-                    it.next();
-                }
-                assert_eq!(expectd.len(), index);
-            };
 
             let mut txn = agate.new_transaction(true);
             let rev = IteratorOptions {
