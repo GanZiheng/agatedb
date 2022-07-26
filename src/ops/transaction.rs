@@ -466,6 +466,14 @@ impl Transaction {
     pub fn set_read_ts(&mut self, read_ts: u64) {
         self.inner.lock().unwrap().read_ts = read_ts;
     }
+
+    pub fn get_commit_ts(&self) -> u64 {
+        self.inner.lock().unwrap().commit_ts
+    }
+
+    pub fn get_read_ts(&self) -> u64 {
+        self.inner.lock().unwrap().read_ts
+    }
 }
 
 impl PendingWritesIterator {
