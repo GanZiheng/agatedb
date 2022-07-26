@@ -209,9 +209,6 @@ pub struct Iterator {
 
     pub(crate) opt: IteratorOptions,
     item: Option<Item>,
-
-    /// Used to skip over multiple versions of the same key.
-    last_key: BytesMut,
 }
 
 impl Transaction {
@@ -270,7 +267,6 @@ impl Transaction {
             read_ts: self.inner.lock().unwrap().read_ts,
             opt: opt.clone(),
             item: None,
-            last_key: BytesMut::new(),
         }
     }
 }
@@ -300,6 +296,13 @@ impl Iterator {
 
     // Advances the iterator by one.
     pub fn next(&mut self) {
+        let key = BytesMut::from(&self.item().key.clone()[..]);
+        let key_with_ts = key_with_ts(key, self.item().version);
+
+        // TODO: Consider add direction flag to avoid seek.
+        self.table_iter.seek(&key_with_ts);
+        self.table_iter.next();
+
         while self.table_iter.valid() {
             if self.parse_item() {
                 return;
@@ -310,8 +313,13 @@ impl Iterator {
     }
 
     pub fn prev(&mut self) {
-        self.table_iter.seek(&self.last_key.clone().freeze());
+        let key = BytesMut::from(&self.item().key.clone()[..]);
+        let key_with_ts = key_with_ts(key, self.item().version);
+
+        // TODO: Consider add direction flag to avoid seek.
+        self.table_iter.seek(&key_with_ts);
         self.table_iter.prev();
+
         while self.table_iter.valid() {
             if self.parse_item_for_prev() {
                 return;
@@ -354,20 +362,26 @@ impl Iterator {
             return true;
         }
 
-        // To support prev, we also should track last_key in forward direction.
-        let key_changed = if !crate::util::same_key(&self.last_key, key) {
-            self.last_key.clear();
-            self.last_key.extend_from_slice(key);
-            true
-        } else {
-            false
-        };
-
         // If iterating in forward direction, then just checking the last key against
         // current key would be sufficient.
-        if !self.opt.reverse && !key_changed {
+        if !self.opt.reverse {
+            self.table_iter.prev();
+
+            // Only track in forward direction.
+            // We should update last_key as soon as we find a different key in our snapshot.
+            // Consider keys: a 5, b 7 (del), b 5. When iterating, last_key = a.
+            // Then we see b 7, which is deleted. If we don't store last_key = b, we'll then
+            // return b 5, which is wrong. Therefore, update last_key here.
+            if self.table_iter.valid()
+                && crate::util::same_key(self.table_iter.key(), key)
+                && get_ts(self.table_iter.key()) <= self.read_ts
+            {
+                self.table_iter.next();
+                self.table_iter.next();
+                return false;
+            }
+
             self.table_iter.next();
-            return false;
         }
 
         loop {
@@ -378,7 +392,12 @@ impl Iterator {
             }
 
             let mut item = Item::new(self.txn.lock().unwrap().core.clone());
-            Self::fill_item(&mut item, key, &self.table_iter.value(), &self.opt);
+            Self::fill_item(
+                &mut item,
+                self.table_iter.key(),
+                &self.table_iter.value(),
+                &self.opt,
+            );
 
             self.table_iter.next();
 
@@ -389,11 +408,11 @@ impl Iterator {
 
             // Reverse direction.
             let next_ts = get_ts(self.table_iter.key());
-            let key_without_ts = user_key(self.table_iter.key());
-            if next_ts <= self.read_ts && key_without_ts == item.key {
+            if next_ts <= self.read_ts && crate::util::same_key(self.table_iter.key(), key) {
                 // This is a valid potential candidate.
                 continue;
             }
+
             // Ignore the next candidate. Return the current one.
             self.item = Some(item);
             return true;
@@ -430,20 +449,21 @@ impl Iterator {
             return true;
         }
 
-        // Opposite of `parse_item`, if iterating in forward direction, we should check until the
-        // key changes or we reach the end of the inner iterator; otherwise, we should use last_key
-        // to get the lastest version of a certian key.
-        let key_changed = if !crate::util::same_key(&self.last_key, key) {
-            self.last_key.clear();
-            self.last_key.extend_from_slice(key);
-            true
-        } else {
-            false
-        };
+        // If iterating in *reverse* direction, then just checking the last key against
+        // current key would be sufficient.
+        if self.opt.reverse {
+            self.table_iter.next();
 
-        if self.opt.reverse && !key_changed {
+            if self.table_iter.valid()
+                && crate::util::same_key(self.table_iter.key(), key)
+                && get_ts(self.table_iter.key()) <= self.read_ts
+            {
+                self.table_iter.prev();
+                self.table_iter.prev();
+                return false;
+            }
+
             self.table_iter.prev();
-            return false;
         }
 
         loop {
@@ -454,7 +474,12 @@ impl Iterator {
             }
 
             let mut item = Item::new(self.txn.lock().unwrap().core.clone());
-            Self::fill_item(&mut item, key, &self.table_iter.value(), &self.opt);
+            Self::fill_item(
+                &mut item,
+                self.table_iter.key(),
+                &self.table_iter.value(),
+                &self.opt,
+            );
 
             self.table_iter.prev();
             if self.opt.reverse || !self.table_iter.valid() {
@@ -464,11 +489,11 @@ impl Iterator {
 
             // Forward direction.
             let next_ts = get_ts(self.table_iter.key());
-            let key_without_ts = user_key(self.table_iter.key());
-            if next_ts <= self.read_ts && key_without_ts == item.key {
+            if next_ts <= self.read_ts && crate::util::same_key(self.table_iter.key(), key) {
                 // This is a valid potential candidate.
                 continue;
             }
+
             // Ignore the next candidate. Return the current one.
             self.item = Some(item);
             return true;
@@ -502,24 +527,27 @@ impl Iterator {
             self.txn.lock().unwrap().add_read_key(key);
         }
 
-        self.last_key.clear();
-
         // TODO: Prefix.
 
         if key.is_empty() {
             self.table_iter.rewind();
-            self.next();
-            return;
+        } else {
+            let key = if !self.opt.reverse {
+                key_with_ts(BytesMut::from(&key[..]), self.read_ts)
+            } else {
+                key_with_ts(BytesMut::from(&key[..]), 0)
+            };
+
+            self.table_iter.seek(&key);
         }
 
-        let key = if !self.opt.reverse {
-            key_with_ts(BytesMut::from(&key[..]), self.txn.lock().unwrap().read_ts)
-        } else {
-            key_with_ts(BytesMut::from(&key[..]), 0)
-        };
+        while self.table_iter.valid() {
+            if self.parse_item() {
+                return;
+            }
+        }
 
-        self.table_iter.seek(&key);
-        self.next();
+        self.item = None;
     }
 
     /// Rewinds the iterator cursor all the way to zero-th position, which would be the
@@ -529,6 +557,7 @@ impl Iterator {
         self.seek(&Bytes::new());
     }
 
+    #[allow(clippy::wrong_self_convention)]
     pub fn to_last(&mut self) {
         // TODO: Re-examine this.
 
@@ -539,6 +568,8 @@ impl Iterator {
                 return;
             }
         }
+
+        self.item = None;
     }
 }
 
@@ -555,7 +586,11 @@ impl Drop for Iterator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{db::tests::*, entry::Entry, util::make_comparator};
+    use crate::{
+        db::tests::*,
+        entry::Entry,
+        util::{make_comparator, test::check_iterator_out_of_bound},
+    };
 
     #[test]
     fn test_skl_iterator_out_of_bound() {
@@ -567,55 +602,11 @@ mod tests {
             skl.put(key, Bytes::new());
         }
 
-        let check = |skl: Skiplist<skiplist::FixedLengthSuffixComparator>, reversed: bool| {
-            let mut iter = TableIterators::from(SkiplistIterator::new(skl.iter(), reversed));
+        let iter = TableIterators::from(SkiplistIterator::new(skl.iter(), false));
+        check_iterator_out_of_bound(iter, n, false);
 
-            iter.rewind();
-            iter.prev();
-            assert!(!iter.valid());
-            iter.prev();
-            assert!(!iter.valid());
-            iter.next();
-            assert!(iter.valid());
-
-            iter.prev();
-            assert!(!iter.valid());
-            iter.prev();
-            assert!(!iter.valid());
-            iter.next();
-            assert!(iter.valid());
-
-            if !reversed {
-                assert_eq!(user_key(iter.key()), format!("{:012x}", 0).as_bytes());
-            } else {
-                assert_eq!(user_key(iter.key()), format!("{:012x}", n - 1).as_bytes());
-            }
-
-            iter.to_last();
-            iter.next();
-            assert!(!iter.valid());
-            iter.next();
-            assert!(!iter.valid());
-            iter.prev();
-            assert!(iter.valid());
-
-            iter.next();
-            assert!(!iter.valid());
-            iter.next();
-            assert!(!iter.valid());
-            iter.prev();
-            assert!(iter.valid());
-
-            if !reversed {
-                assert_eq!(user_key(iter.key()), format!("{:012x}", n - 1).as_bytes());
-            } else {
-                assert_eq!(user_key(iter.key()), format!("{:012x}", 0).as_bytes());
-            }
-        };
-
-        check(skl.clone(), false);
-
-        check(skl, true);
+        let iter = TableIterators::from(SkiplistIterator::new(skl.iter(), true));
+        check_iterator_out_of_bound(iter, n, true);
     }
 
     #[test]
@@ -633,7 +624,7 @@ mod tests {
                     .unwrap();
             }
 
-            let check = |txn: Transaction, reversed: bool| {
+            let check = |txn: &Transaction, reversed: bool| {
                 let mut iter = txn.new_iterator(&IteratorOptions {
                     reverse: reversed,
                     ..Default::default()
@@ -690,9 +681,9 @@ mod tests {
                 }
             };
 
-            check(txn.clone(), false);
+            check(&txn, false);
 
-            check(txn, true);
+            check(&txn, true);
         });
     }
 }
