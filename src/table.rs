@@ -103,7 +103,7 @@ pub struct TableInner {
 /// You may clone it without much overhead.
 #[derive(Clone)]
 pub struct Table {
-    inner: Arc<TableInner>,
+    pub inner: Arc<TableInner>,
 }
 
 /// `AsRef<TableInner>` is only used in `init_biggest_and_smallest`
@@ -405,7 +405,7 @@ impl TableInner {
         Ok(result)
     }
 
-    fn verify_checksum(&self) -> Result<()> {
+    pub fn verify_checksum(&self) -> Result<()> {
         use ChecksumVerificationMode::*;
 
         let table_index = self.fetch_index();

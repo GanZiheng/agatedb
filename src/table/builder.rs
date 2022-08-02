@@ -91,6 +91,7 @@ impl Builder {
 
         let sst_size = v.encoded_size() + diff_key.len() + 4;
         self.table_index.estimated_size += sst_size as u32 + vlog_len;
+        self.table_index.key_count += 1;
     }
 
     fn finish_block(&mut self) {
@@ -147,17 +148,18 @@ impl Builder {
         self.add_helper(key, value, vlog_len);
     }
 
-    /// Check if entries reach its capacity
-    pub fn reach_capacity(&self) -> bool {
+    pub fn estimated_size(&self) -> u32 {
         let block_size = self.buf.len() as u32 + // length of buffer
                                  self.entry_offsets.len() as u32 * 4 + // all entry offsets size
                                  4 + // count of all entry offsets
                                  8 + // checksum bytes
                                  4; // checksum length
-        let estimated_size = block_size +
-                                  4 + // index length
-                                  5 * self.table_index.offsets.len() as u32; // TODO: why 5?
-        estimated_size as u64 > self.options.table_capacity
+        block_size + 4 + 5 * self.table_index.offsets.len() as u32
+    }
+
+    /// Check if entries reach its capacity
+    pub fn reach_capacity(&self) -> bool {
+        self.estimated_size() as u64 > self.options.table_capacity
     }
 
     /// Finalize the table

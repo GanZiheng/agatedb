@@ -119,6 +119,12 @@ pub struct EntryReader {
     header: Header,
 }
 
+impl Default for EntryReader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EntryReader {
     pub fn new() -> Self {
         Self {
