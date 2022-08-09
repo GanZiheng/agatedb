@@ -144,6 +144,14 @@ impl Agate {
     pub fn write_requests(&self, request: Vec<Request>) -> Result<()> {
         self.core.write_requests(request)
     }
+
+    pub fn get_next_ts(&self) -> u64 {
+        self.core.orc.next_ts()
+    }
+
+    pub fn get_read_until(&self) -> u64 {
+        self.core.orc.read_until()
+    }
 }
 
 impl Drop for Agate {

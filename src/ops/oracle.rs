@@ -147,7 +147,7 @@ impl Oracle {
         }
     }
 
-    fn next_ts(&self) -> u64 {
+    pub(crate) fn next_ts(&self) -> u64 {
         let commit_info = self.commit_info.lock().unwrap();
         commit_info.next_txn_ts
     }
@@ -218,6 +218,10 @@ impl Oracle {
         if !self.is_managed {
             self.txn_mark.done(commit_ts);
         }
+    }
+
+    pub(crate) fn read_until(&self) -> u64 {
+        self.read_mark.done_until()
     }
 }
 
